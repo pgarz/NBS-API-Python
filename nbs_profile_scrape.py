@@ -10,6 +10,7 @@ import random
 import time
 import collections
 daysBeforeRelease = 15
+days_after_release = 30
 training_set_size = 20
 services_used = set(["MySpace", "Last.fm", "Facebook", "Twitter", "YouTube", "Wikipedia"])
 
@@ -84,9 +85,27 @@ def get_artist_id(api, target_artist_name):
     print "error in getting id"
     return -1
 
+def get_album_output_label(api, artist_id, release_date_in_seconds):
+  output_label = None
+  print "Fetching output label"
+  day_of_observation = release_date_in_seconds + (timedelta(days = days_after_release).total_seconds())
+  if day_of_observation <= round(time.time()):
+    options = [str(release_date_in_seconds), str(day_of_observation), 'all']
+    metrics_blob = get_metrics_object(api, artist_id, options)
+    for service_map in metrics_blob:
+      if service_map['Service']['name'] == 'YouTube' and type(service_map['Metric']['plays']) is dict:
+        item_to_count_map = service_map['Metric']['plays']
+        item_to_count_map = collections.OrderedDict(sorted(item_to_count_map.items()))
+        sorted_keys = item_to_count_map.keys()
+        output_label = item_map[sorted_keys[-1]]
+
+  return output_label
+
+
+
 def create_vectors_from_albums(api, artist_id, album_releases_map): 
   # Now get the metrics for this artist according to each album
-  albums_to_vectors_map = {}
+  albums_to_trainin_examples_map = {}
   for album_name, release_date_obj in album_releases_map.iteritems():
     print album_name
     print str(release_date_obj)
@@ -110,11 +129,12 @@ def create_vectors_from_albums(api, artist_id, album_releases_map):
 
     curr_album_metrics = get_metrics_object(api, artist_id, options)
     curr_album_feature_vector = metrics_to_vector(curr_album_metrics)
+    curr_album_output_label = get_album_output_label(api, artist_id, end_time)
 
-    if curr_album_feature_vector != None:
-     albums_to_vectors_map[album_name] = curr_album_feature_vector
+    if curr_album_feature_vector != None and curr_album_output_label != None:
+     albums_to_trainin_examples_map[album_name] = (curr_album_feature_vector, curr_album_output_label)
 
-  return albums_to_vectors_map
+  return albums_to_trainin_examples_map
 
 def get_feature_vector_for_a_service(metric_map):
   # then calculate the values
@@ -184,33 +204,24 @@ def metrics_to_vector(album_metrics):
     for service_str in services_used:
       final_vector = final_vector + feature_map[service_str]
 
-
     print "vector size: " + str(len(final_vector))
     return final_vector
 
-  #   album_stats_map[service_name] = metric_map
-
-  # return album_stats_map
-
-
-  # album_vectors = {}
-  # for album_name, album_stat_map:
-  #   for service_name, 
 
 def generate_training_data(artists_to_release_dates):
   api = API("Pedrostanford")
-  # album_releases_map is a map from album name to release date
-  all_albums_to_vectors = {}
+  # all_training_examples is a map from album name to a tuple (feature vector, label)
+  all_training_examples = {}
   for artist_name, album_releases_map in artists_to_release_dates.iteritems():
     curr_artist_id = get_artist_id(api, artist_name)
     # if we got the id, then continue processing
     if curr_artist_id != -1 and curr_artist_id != None:
-      single_artists_album_vectors = create_vectors_from_albums(api, curr_artist_id, album_releases_map)
+      single_artists_album_training_examples = create_vectors_from_albums(api, curr_artist_id, album_releases_map)
       # add these album:vectors map to our total map
-      all_albums_to_vectors.update(single_artists_album_vectors)
+      all_training_examples.update(single_artists_album_training_examples)
   
 
-  print "Finished generating training features!!!!!!!!! " + str(all_albums_to_vectors)
+  print "Finished generating training features!!!!!!!!! " + str(all_training_examples)
 
 print ">> Running our metrics scrapper..."
 artist_to_albums = get_artist_map_from_pickle('artist_to_albums.pickle')
